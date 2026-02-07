@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timezone
 import bcrypt
 import jwt
+import asyncio
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -114,6 +116,14 @@ async def get_current_user_id(authorization: str = Header(None)) -> str:
     token = authorization.split(" ")[1]
     payload = decode_token(token)
     return payload["user_id"]
+
+
+@api_router.get("/health")
+async def health():
+    return {
+        "message": "✅ Server is alive",
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
 
 # --- Auth Routes ---
 @api_router.post("/auth/signup")
@@ -228,6 +238,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def keep_server_alive():
+    # Delay so app + DB are fully ready
+    await asyncio.sleep(10)
+
+    BASE_URL = os.getenv(
+        "BASE_URL",
+        "https://your-fastapi-backend.onrender.com"
+    )
+
+    HEALTH_URL = f"{BASE_URL}/api/health"
+
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                res = await client.get(HEALTH_URL)
+
+            logger.info(
+                f"[KeepAlive] ✅ Ping success @ {datetime.now(timezone.utc).isoformat()}"
+            )
+        except Exception as e:
+            logger.error(f"[KeepAlive] ❌ Ping failed: {e}")
+
+        # 5 minutes (same as Node)
+        await asyncio.sleep(5 * 60)
+
+@app.on_event("startup")
+async def start_keep_alive():
+    asyncio.create_task(keep_server_alive())
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
